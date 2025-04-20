@@ -7281,4 +7281,8 @@
          features. Examples include the search functionality or the app
          predictor. -->
     <string name="config_systemVendorIntelligence" translatable="false"></string>
+
+    <!-- List of string types for the secondary light sensor. The secondary light sensor
+         is typically located on the back or side of the device. -->
+    <string-array name="config_secondaryLightSensorStringTypes" translatable="false"></string-array>
 </resources>

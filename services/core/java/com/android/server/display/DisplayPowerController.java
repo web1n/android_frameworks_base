@@ -108,6 +108,8 @@ import com.android.server.policy.WindowManagerPolicy;
 import lineageos.providers.LineageSettings;
 
 import java.io.PrintWriter;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -471,6 +473,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
     private ScreenOffBrightnessSensorController mScreenOffBrightnessSensorController;
 
     private Sensor mLightSensor;
+    private List<Sensor> mSecondaryLightSensorList;
     private Sensor mScreenOffBrightnessSensor;
 
     private boolean mIsRbcActive;
@@ -1190,7 +1193,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 mAutomaticBrightnessController.stop();
             }
             mAutomaticBrightnessController = mInjector.getAutomaticBrightnessController(
-                    this, handler.getLooper(), mSensorManager, mLightSensor,
+                    this, handler.getLooper(), mSensorManager, mLightSensor, mSecondaryLightSensorList,
                     brightnessMappers, lightSensorWarmUpTimeConfig, PowerManager.BRIGHTNESS_MIN,
                     PowerManager.BRIGHTNESS_MAX, mDozeScaleFactor, lightSensorRate,
                     initialLightSensorRate, brighteningLightDebounce, darkeningLightDebounce,
@@ -2336,6 +2339,13 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 ? Sensor.TYPE_LIGHT : SensorUtils.NO_FALLBACK;
         mLightSensor = SensorUtils.findSensor(mSensorManager,
                 mDisplayDeviceConfig.getAmbientLightSensor(), fallbackType);
+
+        final List<String> secondarySensorTypes = Arrays.asList(mContext.getResources()
+                .getStringArray(com.android.internal.R.array.config_secondaryLightSensorStringTypes));
+        final List<Sensor> sensors = mSensorManager.getSensorList(Sensor.TYPE_ALL);
+        mSecondaryLightSensorList = sensors.stream().filter(sensor ->
+                secondarySensorTypes.contains(sensor.getStringType()) && !sensor.isWakeUpSensor()
+        ).toList();
     }
 
     private void loadScreenOffBrightnessSensor() {
@@ -2704,6 +2714,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
             pw.println("  mDisplayId=" + mDisplayId);
             pw.println("  mLeadDisplayId=" + mLeadDisplayId);
             pw.println("  mLightSensor=" + mLightSensor);
+            pw.println("  mSecondaryLightSensorList=" + Arrays.toString(mSecondaryLightSensorList.toArray()));
             pw.println("  mDisplayBrightnessFollowers=" + mDisplayBrightnessFollowers);
 
             pw.println();
@@ -3348,7 +3359,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
 
         AutomaticBrightnessController getAutomaticBrightnessController(
                 AutomaticBrightnessController.Callbacks callbacks, Looper looper,
-                SensorManager sensorManager, Sensor lightSensor,
+                SensorManager sensorManager, Sensor lightSensor, List<Sensor> secondaryLightSensorList,
                 SparseArray<BrightnessMappingStrategy> brightnessMappingStrategyMap,
                 int lightSensorWarmUpTime, float brightnessMin, float brightnessMax,
                 float dozeScaleFactor, int lightSensorRate, int initialLightSensorRate,
@@ -3365,7 +3376,7 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
                 DisplayManagerFlags displayManagerFlags) {
 
             return new AutomaticBrightnessController(callbacks, looper, sensorManager, lightSensor,
-                    brightnessMappingStrategyMap, lightSensorWarmUpTime, brightnessMin,
+                    secondaryLightSensorList, brightnessMappingStrategyMap, lightSensorWarmUpTime, brightnessMin,
                     brightnessMax, dozeScaleFactor, lightSensorRate, initialLightSensorRate,
                     brighteningLightDebounceConfig, darkeningLightDebounceConfig,
                     brighteningLightDebounceConfigIdle, darkeningLightDebounceConfigIdle,

@@ -63,6 +63,9 @@ import com.android.server.display.feature.DisplayManagerFlags;
 import java.io.PrintWriter;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -119,6 +122,9 @@ public class AutomaticBrightnessController {
 
     // The light sensor, or null if not available or needed.
     private final Sensor mLightSensor;
+
+    // The secondary light sensor list, or null or empty if not available or needed.
+    private final List<Sensor> mSecondaryLightSensorList;
 
     // The mapper to translate ambient lux to screen brightness in the range [0, 1.0].
     @NonNull
@@ -290,7 +296,7 @@ public class AutomaticBrightnessController {
     private boolean mAutoBrightnessOneShot;
 
     AutomaticBrightnessController(Callbacks callbacks, Looper looper,
-            SensorManager sensorManager, Sensor lightSensor,
+            SensorManager sensorManager, Sensor lightSensor, List<Sensor> secondaryLightSensorList,
             SparseArray<BrightnessMappingStrategy> brightnessMappingStrategyMap,
             int lightSensorWarmUpTime, float brightnessMin, float brightnessMax,
             float dozeScaleFactor, int lightSensorRate, int initialLightSensorRate,
@@ -304,7 +310,7 @@ public class AutomaticBrightnessController {
             BrightnessThrottler brightnessThrottler, int ambientLightHorizonShort,
             int ambientLightHorizonLong, float userLux, float userNits,
             DisplayManagerFlags displayManagerFlags) {
-        this(new Injector(), callbacks, looper, sensorManager, lightSensor,
+        this(new Injector(), callbacks, looper, sensorManager, lightSensor, secondaryLightSensorList,
                 brightnessMappingStrategyMap, lightSensorWarmUpTime, brightnessMin, brightnessMax,
                 dozeScaleFactor, lightSensorRate, initialLightSensorRate,
                 brighteningLightDebounceConfig, darkeningLightDebounceConfig,
@@ -320,6 +326,35 @@ public class AutomaticBrightnessController {
     @VisibleForTesting
     AutomaticBrightnessController(Injector injector, Callbacks callbacks, Looper looper,
             SensorManager sensorManager, Sensor lightSensor,
+            SparseArray<BrightnessMappingStrategy> brightnessMappingStrategyMap,
+            int lightSensorWarmUpTime, float brightnessMin, float brightnessMax,
+            float dozeScaleFactor, int lightSensorRate, int initialLightSensorRate,
+            long brighteningLightDebounceConfig, long darkeningLightDebounceConfig,
+            long brighteningLightDebounceConfigIdle, long darkeningLightDebounceConfigIdle,
+            boolean resetAmbientLuxAfterWarmUpConfig, HysteresisLevels ambientBrightnessThresholds,
+            HysteresisLevels screenBrightnessThresholds,
+            HysteresisLevels ambientBrightnessThresholdsIdle,
+            HysteresisLevels screenBrightnessThresholdsIdle, Context context,
+            BrightnessRangeController brightnessModeController,
+            BrightnessThrottler brightnessThrottler, int ambientLightHorizonShort,
+            int ambientLightHorizonLong, float userLux, float userNits,
+            DisplayManagerFlags displayManagerFlags) {
+        this(injector, callbacks, looper, sensorManager, lightSensor, null,
+                brightnessMappingStrategyMap, lightSensorWarmUpTime, brightnessMin, brightnessMax,
+                dozeScaleFactor, lightSensorRate, initialLightSensorRate,
+                brighteningLightDebounceConfig, darkeningLightDebounceConfig,
+                brighteningLightDebounceConfigIdle, darkeningLightDebounceConfigIdle,
+                resetAmbientLuxAfterWarmUpConfig, ambientBrightnessThresholds,
+                screenBrightnessThresholds, ambientBrightnessThresholdsIdle,
+                screenBrightnessThresholdsIdle, context, brightnessModeController,
+                brightnessThrottler, ambientLightHorizonShort, ambientLightHorizonLong, userLux,
+                userNits, displayManagerFlags
+        );     
+    }
+
+    @VisibleForTesting
+    AutomaticBrightnessController(Injector injector, Callbacks callbacks, Looper looper,
+            SensorManager sensorManager, Sensor lightSensor, List<Sensor> secondaryLightSensorList,
             SparseArray<BrightnessMappingStrategy> brightnessMappingStrategyMap,
             int lightSensorWarmUpTime, float brightnessMin, float brightnessMax,
             float dozeScaleFactor, int lightSensorRate, int initialLightSensorRate,
@@ -366,6 +401,7 @@ public class AutomaticBrightnessController {
 
         if (!DEBUG_PRETEND_LIGHT_SENSOR_ABSENT) {
             mLightSensor = lightSensor;
+            mSecondaryLightSensorList = secondaryLightSensorList;
         }
 
         mActivityTaskManager = ActivityTaskManager.getService();
@@ -530,6 +566,12 @@ public class AutomaticBrightnessController {
         if (mAutoBrightnessOneShot && !autoBrightnessOneShot) {
             mSensorManager.registerListener(mLightSensorListener, mLightSensor,
                     mCurrentLightSensorRate * 1000, mHandler);
+            if (mSecondaryLightSensorList != null) {
+                for (Sensor lightSensor : mSecondaryLightSensorList) {
+                    mSensorManager.registerListener(mLightSensorListener, lightSensor,
+                            mCurrentLightSensorRate * 1000, mHandler);   
+                }
+            }
         } else if (!mAutoBrightnessOneShot && autoBrightnessOneShot) {
             mSensorManager.unregisterListener(mLightSensorListener);
         }
@@ -642,6 +684,7 @@ public class AutomaticBrightnessController {
         pw.println("Automatic Brightness Controller State:");
         pw.println("--------------------------------------");
         ipw.println("mLightSensor=" + mLightSensor);
+        ipw.println("mSecondaryLightSensorList=" + Arrays.toString(mSecondaryLightSensorList.toArray()));
         ipw.println("mLightSensorEnabled=" + mLightSensorEnabled);
         ipw.println("mLightSensorEnableTime=" + TimeUtils.formatUptime(mLightSensorEnableTime));
         ipw.println("mCurrentLightSensorRate=" + mCurrentLightSensorRate);
@@ -722,6 +765,12 @@ public class AutomaticBrightnessController {
                 registerForegroundAppUpdater();
                 mSensorManager.registerListener(mLightSensorListener, mLightSensor,
                         mCurrentLightSensorRate * 1000, mHandler);
+                if (mSecondaryLightSensorList != null) {
+                    for (Sensor lightSensor : mSecondaryLightSensorList) {
+                        mSensorManager.registerListener(mLightSensorListener, lightSensor,
+                                mCurrentLightSensorRate * 1000, mHandler);   
+                    }
+                }
                 return true;
             }
         } else if (mLightSensorEnabled) {
@@ -776,6 +825,12 @@ public class AutomaticBrightnessController {
             mSensorManager.unregisterListener(mLightSensorListener);
             mSensorManager.registerListener(mLightSensorListener, mLightSensor,
                     lightSensorRate * 1000, mHandler);
+            if (mSecondaryLightSensorList != null) {
+                for (Sensor lightSensor : mSecondaryLightSensorList) {
+                    mSensorManager.registerListener(mLightSensorListener, lightSensor,
+                            lightSensorRate * 1000, mHandler);
+                }
+            }
         }
     }
 
@@ -1415,14 +1470,18 @@ public class AutomaticBrightnessController {
     }
 
     private final SensorEventListener mLightSensorListener = new SensorEventListener() {
+
+        private final ConcurrentHashMap<String, Float> mSensorValues = new ConcurrentHashMap<>();
+
         @Override
         public void onSensorChanged(SensorEvent event) {
             if (mLightSensorEnabled) {
                 // The time received from the sensor is in nano seconds, hence changing it to ms
                 final long time = (mDisplayManagerFlags.offloadControlsDozeAutoBrightness())
                         ? TimeUnit.NANOSECONDS.toMillis(event.timestamp) : mClock.uptimeMillis();
-                final float lux = event.values[0];
-                handleLightSensorEvent(time, lux);
+                mSensorValues.put(event.sensor.getName(), event.values[0]);
+                final float maxLux = mSensorValues.values().stream().max(Float::compare).orElse(0.0f);
+                handleLightSensorEvent(time, maxLux);
             }
         }
 
